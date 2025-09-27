@@ -1,0 +1,293 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Symphony</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { getFirestore, doc, setDoc, onSnapshot, getAuth, signInAnonymously, signInWithCustomToken, collection, query, addDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+        window.firebase = { initializeApp, getFirestore, doc, setDoc, onSnapshot, getAuth, signInAnonymously, signInWithCustomToken, collection, query, addDoc, getDocs };
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .animate-vibrate {
+            animation: vibrate 0.1s linear infinite alternate;
+        }
+        @keyframes vibrate {
+            from { transform: translateX(-2px); }
+            to { transform: translateX(2px); }
+        }
+        .animate-expand-fade {
+            animation: expandFade 1s forwards;
+        }
+        @keyframes expandFade {
+            0% { transform: scale(0); opacity: 1; }
+            100% { transform: scale(2); opacity: 0; }
+        }
+        .animate-pulse-slow {
+            animation: pulse-slow 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse-slow {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: .5;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-950">
+    <div id="root"></div>
+
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { initializeApp, getFirestore, onSnapshot, getAuth, signInAnonymously, signInWithCustomToken, collection, query, addDoc, getDocs } = window.firebase;
+
+
+        const __app_id = "default-app-id";
+        const __firebase_config = "{}";
+        const __initial_auth_token = "";
+
+
+        const App = () => {
+            const [isChiming, setIsChiming] = useState(false);
+            const [chimeCount, setChimeCount] = useState(0);
+            const [userId, setUserId] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [pitch, setPitch] = useState(440);
+            const [isDragging, setIsDragging] = useState(false);
+            const bellRef = useRef(null);
+            const lastChimeTime = useRef(0);
+
+
+            useEffect(() => {
+                const initializeFirebase = async () => {
+                    try {
+                        const firebaseConfig = JSON.parse(__firebase_config);
+                        const app = initializeApp(firebaseConfig);
+                        const db = getFirestore(app);
+                        const auth = getAuth(app);
+                        
+                        if (__initial_auth_token) {
+                          await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                          await signInAnonymously(auth);
+                        }
+
+
+                        const user = auth.currentUser;
+                        if (user) {
+                          setUserId(user.uid);
+                        } else {
+                          setUserId('anonymous');
+                        }
+
+
+                        const chimeCollectionRef = collection(db, 'artifacts', __app_id, 'public', 'data', 'symphony-chimes');
+                        const chimeCountDocRef = doc(db, 'artifacts', __app_id, 'public', 'data', 'global-chime', 'chime-state');
+                        
+                        // Listen for total chime count
+                        onSnapshot(chimeCountDocRef, (docSnap) => {
+                            if (docSnap.exists()) {
+                                setChimeCount(docSnap.data().count || 0);
+                            }
+                        });
+
+
+                        // Listen for new chimes to play the symphony
+                        onSnapshot(chimeCollectionRef, async (querySnapshot) => {
+                            const newChimes = [];
+                            querySnapshot.forEach((doc) => {
+                                newChimes.push(doc.data());
+                            });
+
+
+                            // Sort the chimes by timestamp in descending order
+                            const sortedChimes = newChimes.sort((a, b) => b.timestamp.toMillis() - a.timestamp.toMillis());
+                            
+                            // Check for the most recent chime to avoid re-playing old ones
+                            const mostRecentChime = sortedChimes[0];
+                            if (mostRecentChime && mostRecentChime.timestamp.toMillis() > lastChimeTime.current) {
+                                lastChimeTime.current = mostRecentChime.timestamp.toMillis();
+                                playSymphony(sortedChimes.slice(0, 15)); // Play the 15 most recent chimes
+                            }
+                        });
+                        setLoading(false);
+                    } catch (e) {
+                        console.error("Firebase Initialization Error:", e);
+                        setLoading(false);
+                    }
+                };
+                initializeFirebase();
+            }, []);
+
+
+            const playSymphony = (chimes) => {
+                let delay = 0;
+                chimes.forEach((chime, index) => {
+                    setTimeout(() => {
+                        playChimeSound(chime.pitch);
+                    }, delay);
+                    delay += 300; // Delay each note by 300ms
+                });
+            };
+
+
+            const playChimeSound = (frequency = pitch) => {
+                try {
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    const oscillator = audioContext.createOscillator();
+                    const gainNode = audioContext.createGain();
+
+
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0.5, audioContext.currentTime + 0.05);
+                    gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.5);
+
+
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioContext.destination);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.5);
+                } catch (e) {
+                    console.error("Web Audio API is not supported in this browser.", e);
+                }
+            };
+            
+            const handleChime = async () => {
+                if (!userId || isChiming || loading) return;
+
+
+                setIsChiming(true);
+                playChimeSound(pitch);
+
+
+                try {
+                    const db = getFirestore();
+                    const chimeCollectionRef = collection(db, 'artifacts', __app_id, 'public', 'data', 'symphony-chimes');
+                    const chimeCountDocRef = doc(db, 'artifacts', __app_id, 'public', 'data', 'global-chime', 'chime-state');
+                    
+                    // Add a new document for this chime event
+                    await addDoc(chimeCollectionRef, {
+                        pitch: pitch,
+                        timestamp: new Date(),
+                        userId: userId
+                    });
+                    
+                    // Update the global chime count
+                    const chimeCountSnap = await getDocs(chimeCollectionRef);
+                    const newCount = chimeCountSnap.docs.length;
+                    await setDoc(chimeCountDocRef, { count: newCount }, { merge: true });
+                    
+                } catch (e) {
+                    console.error("Error updating Firestore:", e);
+                }
+                
+                setTimeout(() => {
+                    setIsChiming(false);
+                }, 1000);
+            };
+
+
+            const handleDragStart = (e) => {
+                setIsDragging(true);
+                e.preventDefault();
+            };
+
+
+            const handleDragMove = (e) => {
+                if (!isDragging) return;
+                const rect = bellRef.current.getBoundingClientRect();
+                const y = e.clientY || e.touches[0].clientY;
+                const normalizedY = (y - rect.top) / rect.height;
+                const newPitch = 200 + (1 - normalizedY) * 600;
+                setPitch(Math.min(Math.max(newPitch, 200), 800));
+            };
+
+
+            const handleDragEnd = () => {
+                setIsDragging(false);
+            };
+            
+            if (loading) {
+                return (
+                    <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-gray-950 text-white">
+                        <p className="text-xl sm:text-2xl font-bold text-center">
+                            Loading...
+                        </p>
+                    </div>
+                );
+            }
+
+
+            return (
+                <div 
+                    className="flex flex-col items-center justify-center min-h-screen p-4 bg-gray-950 text-white"
+                    onMouseMove={handleDragMove}
+                    onMouseUp={handleDragEnd}
+                    onTouchMove={handleDragMove}
+                    onTouchEnd={handleDragEnd}
+                >
+                    <div className="max-w-md w-full text-center p-8 bg-gray-900 rounded-2xl shadow-xl border border-gray-700">
+                        <h1 className="text-4xl sm:text-5xl font-bold mb-2 text-transparent bg-clip-text bg-gradient-to-r from-teal-400 to-emerald-500 animate-pulse-slow">
+                            The world has enough.
+                        </h1>
+                        <h2 className="text-2xl sm:text-3xl font-medium mb-8 text-gray-200">
+                            We are ready.
+                        </h2>
+
+
+                        <div className="relative inline-block">
+                            <button
+                                ref={bellRef}
+                                onMouseDown={handleDragStart}
+                                onTouchStart={handleDragStart}
+                                onClick={handleChime}
+                                disabled={loading}
+                                className={`
+                                    w-32 h-32 rounded-full flex items-center justify-center
+                                    transition-all duration-300 transform
+                                    bg-emerald-500 text-gray-900 shadow-lg
+                                    hover:scale-105 active:scale-95
+                                    disabled:opacity-50 disabled:cursor-not-allowed
+                                    ${isChiming ? 'animate-vibrate' : ''}
+                                `}
+                            >
+                                <span className={`text-6xl ${isChiming ? 'animate-ping' : ''}`}>
+                                    🔔
+                                </span>
+                            </button>
+                            {isChiming && (
+                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                    <div className="absolute w-48 h-48 rounded-full bg-emerald-400 opacity-20 animate-expand-fade"></div>
+                                </div>
+                            )}
+                        </div>
+                        
+                        <p className="mt-8 text-sm text-gray-400">
+                            Total chimes rung globally: **{chimeCount}**
+                        </p>
+                        <p className="mt-2 text-xs text-gray-500">
+                            Your ID: {userId}
+                        </p>
+                    </div>
+                </div>
+            );
+        };
+        
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
